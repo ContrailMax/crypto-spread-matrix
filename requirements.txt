@@ -1,0 +1,6 @@
+streamlit
+pandas
+numpy
+google-cloud-bigquery
+db-dtypes
+plotly
