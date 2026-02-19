@@ -7,7 +7,7 @@ from google.cloud import bigquery
 
 # --- ตั้งค่าหน้าเว็บ ---
 st.set_page_config(layout="wide", page_title="Crypto Arbitrage Matrix")
-st.title("🚀 Crypto Arbitrage Matrix")
+st.title("Crypto Arbitrage Matrix")
 
 # --- 1. ฟังก์ชันเชื่อมต่อ BigQuery ---
 @st.cache_resource
