@@ -8,7 +8,6 @@ from google.cloud import bigquery
 
 # --- ตั้งค่าหน้าเว็บ ---
 st.set_page_config(layout="wide", page_title="Crypto Arbitrage Dashboard")
-st.title("🚀 Crypto Arbitrage Dashboard")
 
 # --- 1. ฟังก์ชันเชื่อมต่อ BigQuery ---
 @st.cache_resource
@@ -17,21 +16,17 @@ def get_bq_client():
     credentials = service_account.Credentials.from_service_account_info(key_dict)
     return bigquery.Client(credentials=credentials, project='project-2c68fafb-fc39-4b54-b6f')
 
-# --- 2. ฟังก์ชันดึงข้อมูลแบบ "เหมา" ย้อนหลัง 3 วัน (เผื่อดูกราฟย้อนหลัง) ---
+# --- 2. ฟังก์ชันดึงข้อมูลแบบ "เหมา" ย้อนหลัง 3 วัน ---
 @st.cache_data(ttl=60) 
 def load_recent_data():
     client = get_bq_client()
-    # ดึงย้อนหลัง 3 วัน เพื่อให้มี Data พอสำหรับดูกราฟ
     query = """
         SELECT * FROM `project-2c68fafb-fc39-4b54-b6f.spread_raw_data.price_logs`
         WHERE RunTimestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
         ORDER BY RunTimestamp DESC
     """
     df = client.query(query).to_dataframe()
-    
-    # 🌟 แปลงเวลาเป็น UTC+7 (Bangkok Time)
     df['RunTimestamp'] = pd.to_datetime(df['RunTimestamp'], utc=True).dt.tz_convert('Asia/Bangkok').dt.tz_localize(None)
-    
     df['Price'] = pd.to_numeric(df['Price'])
     df['Fx'] = pd.to_numeric(df['Fx'])
     df['price_usd'] = df['Price'] / df['Fx']
@@ -63,23 +58,27 @@ try:
         df_all['Date'] = df_all['RunTimestamp'].dt.date
         df_all['Time'] = df_all['RunTimestamp'].dt.strftime('%H:%M:%S')
 
-        # 🌟 สร้างแท็บหลัก 3 อัน
-        main_tab1, main_tab2, main_tab3 = st.tabs(["📊 Spread Matrix", "📈 Historical Trend", "🔀 4-Leg Arbitrage"])
+        # 🌟 เปลี่ยนจาก Tabs เป็น Sidebar Navigation เพื่อแก้ปัญหาการเด้งกลับหน้าแรก
+        with st.sidebar:
+            st.title("🚀 Navigation")
+            page = st.radio("Select Page:", ["📊 Spread Matrix", "📈 Historical Trend", "🔀 4-Leg Arbitrage"])
+            st.markdown("---")
+            if st.button("🔄 Force Refresh Data"):
+                st.cache_data.clear()
+                st.rerun()
 
         # ==========================================
-        # 🟢 MAIN TAB 1: SPREAD MATRIX
+        # 🟢 PAGE 1: SPREAD MATRIX
         # ==========================================
-        with main_tab1:
-            st.subheader("🗓️ Select Coin & Timestamp for Matrix")
+        if page == "📊 Spread Matrix":
+            st.title("📊 Spread Matrix")
+            st.subheader("🗓️ Select Coin & Timestamp")
             
-            # ดึงรายชื่อเหรียญทั้งหมดที่มีในระบบ
             coin_list = sorted(df_all['Coin'].unique())
-            
-            col_c, col1, col2, col3 = st.columns([1, 1, 1, 1.5])
+            col_c, col1, col2 = st.columns([1, 1, 1])
             with col_c:
                 selected_coin = st.selectbox("🪙 Select Coin", coin_list, key="matrix_coin")
             
-            # กรองข้อมูลตามเหรียญที่เลือกก่อน
             df_coin = df_all[df_all['Coin'] == selected_coin]
             
             with col1:
@@ -88,14 +87,7 @@ try:
             with col2:
                 available_times = df_coin[df_coin['Date'] == selected_date]['Time'].unique()
                 selected_time = st.selectbox("2. Select Time", available_times, key="matrix_time")
-            with col3:
-                st.write("") 
-                st.write("")
-                if st.button("🔄 Refresh Latest Data"):
-                    st.cache_data.clear()
-                    st.rerun()
 
-            # สร้าง Matrix ตามเวลาและเหรียญที่เลือก
             df_matrix = df_coin[(df_coin['Date'] == selected_date) & (df_coin['Time'] == selected_time)].copy()
             pivot_df = df_matrix.pivot_table(index='Exchange', columns='Side', values='price_usd', aggfunc='last')
             exchanges = sorted(pivot_df.index.tolist())
@@ -129,49 +121,47 @@ try:
 
 
         # ==========================================
-        # 🔵 MAIN TAB 2: HISTORICAL TREND (GRAPH)
+        # 🔵 PAGE 2: HISTORICAL TREND (GRAPH)
         # ==========================================
-        with main_tab2:
-            st.subheader("📈 Custom Historical Spread Graphs")
+        elif page == "📈 Historical Trend":
+            st.title("📈 Historical Trend")
+            st.subheader("Custom Historical Spread Graphs")
             
-            # --- 1. ระบบจัดการ State สำหรับเก็บหลายๆ กราฟ ---
             if 'graph_configs' not in st.session_state:
                 st.session_state.graph_configs = []
 
-            # --- 2. ส่วนควบคุมการกดปุ่ม "เพิ่มกราฟ" (Add Graph Panel) ---
             ex_list = sorted(df_all['Exchange'].unique())
+            coin_list = sorted(df_all['Coin'].unique())
             
             with st.expander("➕ Create New Graph (Click to expand)", expanded=True):
                 c1, c2, c3, c4, c5 = st.columns(5)
                 exA = c1.selectbox("Exchange A", ex_list, key="new_exA")
                 exB = c2.selectbox("Exchange B", ex_list, index=(1 if len(ex_list) > 1 else 0), key="new_exB")
                 coin_sel = c3.selectbox("Coin", coin_list, key="new_coin")
-                dir_sel = c4.selectbox("Spread Direction", ["A (Ask) -> B (Bid)", "B (Ask) -> A (Bid)"], key="new_dir")
+                
+                # 🌟 เปลี่ยนตัวเลือกเป็น Side 4 แบบ (อิงตาม A -> B เสมอ)
+                dir_sel = c4.selectbox("Side Comparison", ["Ask -> Bid", "Bid -> Ask", "Ask -> Ask", "Bid -> Bid"], key="new_dir")
                 
                 c5.write("")
                 c5.write("")
                 if c5.button("📊 Add Graph", type="primary"):
-                    # บันทึกค่าที่เลือกลงในความจำ
                     st.session_state.graph_configs.append({
                         'exA': exA, 'exB': exB, 'coin': coin_sel, 'direction': dir_sel
                     })
                     st.rerun()
 
-            # --- 3. ส่วนแสดงผลกราฟทั้งหมดที่ถูกสร้างไว้ ---
             if not st.session_state.graph_configs:
                 st.info("👆 Please select options above and click 'Add Graph' to generate a visualization.")
             
             for i, g_config in enumerate(st.session_state.graph_configs):
                 st.markdown("---")
                 
-                # Header และ ปุ่มลบกราฟ
                 h_col1, h_col2 = st.columns([9, 1])
-                h_col1.markdown(f"#### 📉 {g_config['exA']} vs {g_config['exB']} | Coin: {g_config['coin']} | {g_config['direction']}")
+                h_col1.markdown(f"#### 📉 {g_config['exA']} ➡️ {g_config['exB']} | Coin: {g_config['coin']} | {g_config['direction']}")
                 if h_col2.button("❌ Remove", key=f"del_{i}"):
                     st.session_state.graph_configs.pop(i)
                     st.rerun()
 
-                # ส่วนเลือกวัน/เวลา (Time Range Filter) เฉพาะของกราฟนี้
                 min_date = df_all['RunTimestamp'].dt.date.min()
                 max_date = df_all['RunTimestamp'].dt.date.max()
 
@@ -181,11 +171,9 @@ try:
                 end_date = f_col3.date_input("End Date", max_date, key=f"ed_{i}")
                 end_time = f_col4.time_input("End Time", pd.to_datetime("23:59:59").time(), key=f"et_{i}")
 
-                # นำวันที่+เวลามาประกอบกันเพื่อใช้กรองข้อมูล
                 start_dt = pd.to_datetime(f"{start_date} {start_time}")
                 end_dt = pd.to_datetime(f"{end_date} {end_time}")
 
-                # กรองข้อมูลตาม Config ของกราฟนั้นๆ
                 df_g = df_all[
                     (df_all['Coin'] == g_config['coin']) &
                     (df_all['Exchange'].isin([g_config['exA'], g_config['exB']])) &
@@ -193,7 +181,6 @@ try:
                     (df_all['RunTimestamp'] <= end_dt)
                 ]
 
-                # สร้างกราฟ
                 if df_g.empty:
                     st.warning(f"No data available for the selected time range ({start_dt} to {end_dt}).")
                 else:
@@ -203,14 +190,24 @@ try:
                     def calc_series(s1, s2):
                         return ((s1 - s2) / np.maximum(s1, s2)) * 10000
 
-                    # คำนวณ Spread ตาม Direction ที่เลือก
                     chart_label = f"Spread (pips)"
-                    if g_config['direction'] == "A (Ask) -> B (Bid)":
+                    
+                    # 🌟 คำนวณตาม 4 ทิศทาง (A -> B เสมอ)
+                    if g_config['direction'] == "Ask -> Bid":
                         if (g_config['exA'], 'ASK') in pivot_chart.columns and (g_config['exB'], 'BID') in pivot_chart.columns:
                             trend_data[chart_label] = calc_series(pivot_chart[(g_config['exA'], 'ASK')], pivot_chart[(g_config['exB'], 'BID')])
-                    else:
-                        if (g_config['exB'], 'ASK') in pivot_chart.columns and (g_config['exA'], 'BID') in pivot_chart.columns:
-                            trend_data[chart_label] = calc_series(pivot_chart[(g_config['exB'], 'ASK')], pivot_chart[(g_config['exA'], 'BID')])
+                    
+                    elif g_config['direction'] == "Bid -> Ask":
+                        if (g_config['exA'], 'BID') in pivot_chart.columns and (g_config['exB'], 'ASK') in pivot_chart.columns:
+                            trend_data[chart_label] = calc_series(pivot_chart[(g_config['exA'], 'BID')], pivot_chart[(g_config['exB'], 'ASK')])
+                    
+                    elif g_config['direction'] == "Ask -> Ask":
+                        if (g_config['exA'], 'ASK') in pivot_chart.columns and (g_config['exB'], 'ASK') in pivot_chart.columns:
+                            trend_data[chart_label] = calc_series(pivot_chart[(g_config['exA'], 'ASK')], pivot_chart[(g_config['exB'], 'ASK')])
+                            
+                    elif g_config['direction'] == "Bid -> Bid":
+                        if (g_config['exA'], 'BID') in pivot_chart.columns and (g_config['exB'], 'BID') in pivot_chart.columns:
+                            trend_data[chart_label] = calc_series(pivot_chart[(g_config['exA'], 'BID')], pivot_chart[(g_config['exB'], 'BID')])
 
                     if not trend_data.empty and chart_label in trend_data.columns:
                         trend_data = trend_data.reset_index()
@@ -220,29 +217,22 @@ try:
                             y=chart_label,
                             labels={"value": "Spread (pips)", "RunTimestamp": "Date & Time (UTC+7)"}
                         )
-                        # เพิ่มรายละเอียดใต้ชื่อกราฟนิดหน่อย
                         fig.update_layout(
-                            title=f"Buy at {g_config['exA'] if 'A (Ask)' in g_config['direction'] else g_config['exB']} -> Sell at {g_config['exB'] if 'A (Ask)' in g_config['direction'] else g_config['exA']}",
+                            title=f"A: {g_config['exA']} ➡️ B: {g_config['exB']} ({g_config['direction']})",
                             hovermode="x unified"
                         )
                         fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.7)
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.warning("⚠️ Missing Ask or Bid data for this specific pair in the selected time range.")
+                        st.warning("⚠️ Missing data for this specific pair/side in the selected time range.")
 
 
         # ==========================================
-        # 🟡 MAIN TAB 3: 4-LEG ARBITRAGE (Placeholder)
+        # 🟡 PAGE 3: 4-LEG ARBITRAGE
         # ==========================================
-        with main_tab3:
-            st.header("🔀 4-Leg Arbitrage (Cross-Exchange Triangular)")
-            st.info("🚧 **Coming Soon...** Waiting for data collection (e.g., XRP, XLM, USDT routes).")
-            st.write("""
-            **Planned Features for this section:**
-            * Automatic pathfinding for highest net profit routes.
-            * Calculation format: `THB -> Coin A -> Transfer -> Coin A -> USDT -> Coin B -> THB`
-            * Real-time transfer fee and slippage estimations.
-            """)
+        elif page == "🔀 4-Leg Arbitrage":
+            st.title("🔀 4-Leg Arbitrage")
+            st.info("🚧 Coming Soon...")
 
 except Exception as e:
     st.error(f"❌ An error occurred: {e}")
