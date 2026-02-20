@@ -8,6 +8,7 @@ from google.cloud import bigquery
 
 # --- ตั้งค่าหน้าเว็บ ---
 st.set_page_config(layout="wide", page_title="Crypto Arbitrage Dashboard")
+st.title("🚀 Crypto Arbitrage Dashboard")
 
 # --- 1. ฟังก์ชันเชื่อมต่อ BigQuery ---
 @st.cache_resource
@@ -58,24 +59,17 @@ try:
         df_all['Date'] = df_all['RunTimestamp'].dt.date
         df_all['Time'] = df_all['RunTimestamp'].dt.strftime('%H:%M:%S')
 
-        # 🌟 เปลี่ยนจาก Tabs เป็น Sidebar Navigation เพื่อแก้ปัญหาการเด้งกลับหน้าแรก
-        with st.sidebar:
-            st.title("🚀 Navigation")
-            page = st.radio("Select Page:", ["📊 Spread Matrix", "📈 Historical Trend", "🔀 4-Leg Arbitrage"])
-            st.markdown("---")
-            if st.button("🔄 Force Refresh Data"):
-                st.cache_data.clear()
-                st.rerun()
+        # 🌟 กลับมาใช้ Tabs แนวนอนแบบเดิม
+        main_tab1, main_tab2, main_tab3 = st.tabs(["📊 Spread Matrix", "📈 Historical Trend", "🔀 4-Leg Arbitrage"])
 
         # ==========================================
-        # 🟢 PAGE 1: SPREAD MATRIX
+        # 🟢 TAB 1: SPREAD MATRIX
         # ==========================================
-        if page == "📊 Spread Matrix":
-            st.title("📊 Spread Matrix")
+        with main_tab1:
             st.subheader("🗓️ Select Coin & Timestamp")
             
             coin_list = sorted(df_all['Coin'].unique())
-            col_c, col1, col2 = st.columns([1, 1, 1])
+            col_c, col1, col2, col3 = st.columns([1, 1, 1, 1.5])
             with col_c:
                 selected_coin = st.selectbox("🪙 Select Coin", coin_list, key="matrix_coin")
             
@@ -87,6 +81,12 @@ try:
             with col2:
                 available_times = df_coin[df_coin['Date'] == selected_date]['Time'].unique()
                 selected_time = st.selectbox("2. Select Time", available_times, key="matrix_time")
+            with col3:
+                st.write("")
+                st.write("")
+                if st.button("🔄 Refresh Latest Data"):
+                    st.cache_data.clear()
+                    st.rerun()
 
             df_matrix = df_coin[(df_coin['Date'] == selected_date) & (df_coin['Time'] == selected_time)].copy()
             pivot_df = df_matrix.pivot_table(index='Exchange', columns='Side', values='price_usd', aggfunc='last')
@@ -121,17 +121,15 @@ try:
 
 
         # ==========================================
-        # 🔵 PAGE 2: HISTORICAL TREND (GRAPH)
+        # 🔵 TAB 2: HISTORICAL TREND (GRAPH)
         # ==========================================
-        elif page == "📈 Historical Trend":
-            st.title("📈 Historical Trend")
+        with main_tab2:
             st.subheader("Custom Historical Spread Graphs")
             
             if 'graph_configs' not in st.session_state:
                 st.session_state.graph_configs = []
 
             ex_list = sorted(df_all['Exchange'].unique())
-            coin_list = sorted(df_all['Coin'].unique())
             
             with st.expander("➕ Create New Graph (Click to expand)", expanded=True):
                 c1, c2, c3, c4, c5 = st.columns(5)
@@ -139,7 +137,7 @@ try:
                 exB = c2.selectbox("Exchange B", ex_list, index=(1 if len(ex_list) > 1 else 0), key="new_exB")
                 coin_sel = c3.selectbox("Coin", coin_list, key="new_coin")
                 
-                # 🌟 เปลี่ยนตัวเลือกเป็น Side 4 แบบ (อิงตาม A -> B เสมอ)
+                # 🌟 ทิศทาง A -> B อย่างเดียวตามที่คุณต้องการ
                 dir_sel = c4.selectbox("Side Comparison", ["Ask -> Bid", "Bid -> Ask", "Ask -> Ask", "Bid -> Bid"], key="new_dir")
                 
                 c5.write("")
@@ -192,19 +190,15 @@ try:
 
                     chart_label = f"Spread (pips)"
                     
-                    # 🌟 คำนวณตาม 4 ทิศทาง (A -> B เสมอ)
                     if g_config['direction'] == "Ask -> Bid":
                         if (g_config['exA'], 'ASK') in pivot_chart.columns and (g_config['exB'], 'BID') in pivot_chart.columns:
                             trend_data[chart_label] = calc_series(pivot_chart[(g_config['exA'], 'ASK')], pivot_chart[(g_config['exB'], 'BID')])
-                    
                     elif g_config['direction'] == "Bid -> Ask":
                         if (g_config['exA'], 'BID') in pivot_chart.columns and (g_config['exB'], 'ASK') in pivot_chart.columns:
                             trend_data[chart_label] = calc_series(pivot_chart[(g_config['exA'], 'BID')], pivot_chart[(g_config['exB'], 'ASK')])
-                    
                     elif g_config['direction'] == "Ask -> Ask":
                         if (g_config['exA'], 'ASK') in pivot_chart.columns and (g_config['exB'], 'ASK') in pivot_chart.columns:
                             trend_data[chart_label] = calc_series(pivot_chart[(g_config['exA'], 'ASK')], pivot_chart[(g_config['exB'], 'ASK')])
-                            
                     elif g_config['direction'] == "Bid -> Bid":
                         if (g_config['exA'], 'BID') in pivot_chart.columns and (g_config['exB'], 'BID') in pivot_chart.columns:
                             trend_data[chart_label] = calc_series(pivot_chart[(g_config['exA'], 'BID')], pivot_chart[(g_config['exB'], 'BID')])
@@ -228,10 +222,11 @@ try:
 
 
         # ==========================================
-        # 🟡 PAGE 3: 4-LEG ARBITRAGE
+        # 🟡 TAB 3: 4-LEG ARBITRAGE
         # ==========================================
-        elif page == "🔀 4-Leg Arbitrage":
-            st.title("🔀 4-Leg Arbitrage")
+        with main_tab3:
+            st.header("🔀 4-Leg Arbitrage (Cross-Exchange Triangular)")
+            # 🌟 ลบ Planned Features ออกตามคำขอ
             st.info("🚧 Coming Soon...")
 
 except Exception as e:
