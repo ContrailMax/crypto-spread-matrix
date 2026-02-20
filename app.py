@@ -59,13 +59,23 @@ try:
         df_all['Date'] = df_all['RunTimestamp'].dt.date
         df_all['Time'] = df_all['RunTimestamp'].dt.strftime('%H:%M:%S')
 
-        # 🌟 กลับมาใช้ Tabs แนวนอนแบบเดิม
-        main_tab1, main_tab2, main_tab3 = st.tabs(["📊 Spread Matrix", "📈 Historical Trend", "🔀 4-Leg Arbitrage"])
+        # 🌟 เปลี่ยนวิธี Navigation: ใช้ Radio แนวนอน แทน Tabs
+        # วิธีนี้จะจำสถานะหน้าได้แม่นยำกว่า Tabs ปกติ ไม่เด้งกลับ
+        st.write('<style>div.row-widget.stRadio > div{flex-direction:row;}</style>', unsafe_allow_html=True)
+        
+        # เมนูเลือกหน้า (แนวนอนด้านบน)
+        selected_page = st.radio(
+            "", 
+            ["📊 Spread Matrix", "📈 Historical Trend", "🔀 4-Leg Arbitrage"], 
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+        st.markdown("---")
 
         # ==========================================
-        # 🟢 TAB 1: SPREAD MATRIX
+        # 🟢 PAGE 1: SPREAD MATRIX
         # ==========================================
-        with main_tab1:
+        if selected_page == "📊 Spread Matrix":
             st.subheader("🗓️ Select Coin & Timestamp")
             
             coin_list = sorted(df_all['Coin'].unique())
@@ -104,7 +114,7 @@ try:
                             mat.loc[ex_row, ex_col] = spread_pips(p1, p2)
                 return mat.astype(float)
 
-            st.markdown("---")
+            # ส่วน Tabs ย่อยของ Matrix (อันนี้ใช้ st.tabs ได้ เพราะไม่ค่อยมีการ Rerun หนักๆ)
             sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["ASK-BID", "BID-ASK", "ASK-ASK", "BID-BID"])
             with sub_tab1:
                 mat_ask_bid = build_matrix(exchanges, pivot_df, 'ASK', 'BID')
@@ -121,9 +131,9 @@ try:
 
 
         # ==========================================
-        # 🔵 TAB 2: HISTORICAL TREND (GRAPH)
+        # 🔵 PAGE 2: HISTORICAL TREND (GRAPH)
         # ==========================================
-        with main_tab2:
+        elif selected_page == "📈 Historical Trend":
             st.subheader("Custom Historical Spread Graphs")
             
             if 'graph_configs' not in st.session_state:
@@ -135,9 +145,9 @@ try:
                 c1, c2, c3, c4, c5 = st.columns(5)
                 exA = c1.selectbox("Exchange A", ex_list, key="new_exA")
                 exB = c2.selectbox("Exchange B", ex_list, index=(1 if len(ex_list) > 1 else 0), key="new_exB")
-                coin_sel = c3.selectbox("Coin", coin_list, key="new_coin")
+                coin_sel = c3.selectbox("Coin", sorted(df_all['Coin'].unique()), key="new_coin")
                 
-                # 🌟 ทิศทาง A -> B อย่างเดียวตามที่คุณต้องการ
+                # ทิศทาง A -> B
                 dir_sel = c4.selectbox("Side Comparison", ["Ask -> Bid", "Bid -> Ask", "Ask -> Ask", "Bid -> Bid"], key="new_dir")
                 
                 c5.write("")
@@ -222,11 +232,10 @@ try:
 
 
         # ==========================================
-        # 🟡 TAB 3: 4-LEG ARBITRAGE
+        # 🟡 PAGE 3: 4-LEG ARBITRAGE
         # ==========================================
-        with main_tab3:
+        elif selected_page == "🔀 4-Leg Arbitrage":
             st.header("🔀 4-Leg Arbitrage (Cross-Exchange Triangular)")
-            # 🌟 ลบ Planned Features ออกตามคำขอ
             st.info("🚧 Coming Soon...")
 
 except Exception as e:
