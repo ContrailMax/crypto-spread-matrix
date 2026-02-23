@@ -235,8 +235,127 @@ try:
         # 🟡 PAGE 3: 4-LEG ARBITRAGE
         # ==========================================
         elif selected_page == "🔀 4-Leg Arbitrage":
-            st.header("🔀 4-Leg Arbitrage (Cross-Exchange Triangular)")
-            st.info("🚧 Coming Soon...")
+            st.subheader("🔀 4-Leg Arbitrage (Cross-Exchange Triangular)")
+            
+            if 'arb4_configs' not in st.session_state:
+                st.session_state.arb4_configs = []
+
+            ex_list = sorted(df_all['Exchange'].unique())
+            coin_list = sorted(df_all['Coin'].unique())
+            
+            with st.expander("➕ Create New 4-Leg Graph (Click to expand)", expanded=True):
+                c1, c2, c3, c4 = st.columns(4)
+                exA = c1.selectbox("Exchange A", ex_list, key="arb_exA")
+                exB = c2.selectbox("Exchange B", ex_list, index=(1 if len(ex_list) > 1 else 0), key="arb_exB")
+                coin1 = c3.selectbox("Pair 1 (Coin)", coin_list, key="arb_coin1")
+                coin2 = c4.selectbox("Pair 2 (Coin)", coin_list, index=(1 if len(coin_list) > 1 else 0), key="arb_coin2")
+                
+                c5, c6, c7 = st.columns([2, 2, 1])
+                dir_options = ["Ask -> Bid", "Bid -> Ask", "Ask -> Ask", "Bid -> Bid"]
+                dir1 = c5.selectbox("Side 1 (For Pair 1)", dir_options, key="arb_dir1")
+                dir2 = c6.selectbox("Side 2 (For Pair 2)", dir_options, key="arb_dir2")
+                
+                c7.write("")
+                c7.write("")
+                if c7.button("📊 Add Graph", type="primary", key="add_arb4"):
+                    st.session_state.arb4_configs.append({
+                        'exA': exA, 'exB': exB, 'coin1': coin1, 'coin2': coin2, 
+                        'dir1': dir1, 'dir2': dir2
+                    })
+                    st.rerun()
+
+            if not st.session_state.arb4_configs:
+                st.info("👆 Please select options above and click 'Add Graph' to generate visualizations.")
+            
+            for i, g_config in enumerate(st.session_state.arb4_configs):
+                st.markdown("---")
+                
+                h_col1, h_col2 = st.columns([9, 1])
+                h_col1.markdown(f"#### 🔀 {g_config['exA']} ➡️ {g_config['exB']} | Coins: {g_config['coin1']} & {g_config['coin2']}")
+                if h_col2.button("❌ Remove", key=f"del_arb_{i}"):
+                    st.session_state.arb4_configs.pop(i)
+                    st.rerun()
+
+                min_date = df_all['RunTimestamp'].dt.date.min()
+                max_date = df_all['RunTimestamp'].dt.date.max()
+
+                f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+                start_date = f_col1.date_input("Start Date", min_date, key=f"asd_{i}")
+                start_time = f_col2.time_input("Start Time", pd.to_datetime("00:00").time(), key=f"ast_{i}")
+                end_date = f_col3.date_input("End Date", max_date, key=f"aed_{i}")
+                end_time = f_col4.time_input("End Time", pd.to_datetime("23:59:59").time(), key=f"aet_{i}")
+
+                start_dt = pd.to_datetime(f"{start_date} {start_time}")
+                end_dt = pd.to_datetime(f"{end_date} {end_time}")
+
+                # Filter data for both coins and selected timeframe
+                df_g = df_all[
+                    (df_all['Coin'].isin([g_config['coin1'], g_config['coin2']])) &
+                    (df_all['Exchange'].isin([g_config['exA'], g_config['exB']])) &
+                    (df_all['RunTimestamp'] >= start_dt) &
+                    (df_all['RunTimestamp'] <= end_dt)
+                ]
+
+                if df_g.empty:
+                    st.warning(f"No data available for the selected time range ({start_dt} to {end_dt}).")
+                else:
+                    # Pivot table includes 'Coin' level now
+                    pivot_chart = df_g.pivot_table(index='RunTimestamp', columns=['Coin', 'Exchange', 'Side'], values='price_usd')
+                    trend_data = pd.DataFrame(index=pivot_chart.index)
+                    
+                    def get_spread_series(coin, dir_str):
+                        sideA, sideB = dir_str.split(" -> ")[0].upper(), dir_str.split(" -> ")[1].upper()
+                        if (coin, g_config['exA'], sideA) in pivot_chart.columns and (coin, g_config['exB'], sideB) in pivot_chart.columns:
+                            s1 = pivot_chart[(coin, g_config['exA'], sideA)]
+                            s2 = pivot_chart[(coin, g_config['exB'], sideB)]
+                            return ((s1 - s2) / np.maximum(s1, s2)) * 10000
+                        return pd.Series(dtype=float)
+
+                    # Calculate Spreads
+                    col_spread1 = f"{g_config['coin1']} Spread ({g_config['dir1']})"
+                    col_spread2 = f"{g_config['coin2']} Spread ({g_config['dir2']})"
+                    
+                    trend_data[col_spread1] = get_spread_series(g_config['coin1'], g_config['dir1'])
+                    trend_data[col_spread2] = get_spread_series(g_config['coin2'], g_config['dir2'])
+
+                    if trend_data[col_spread1].dropna().empty and trend_data[col_spread2].dropna().empty:
+                        st.warning("⚠️ Missing data for BOTH pairs in the selected time range.")
+                    else:
+                        trend_data['Spread Difference'] = trend_data[col_spread1] - trend_data[col_spread2]
+                        trend_data = trend_data.reset_index()
+
+                        # --- GRAPH 1: Overlaid Spreads ---
+                        fig1 = px.line(
+                            trend_data, 
+                            x='RunTimestamp', 
+                            y=[col_spread1, col_spread2],
+                            labels={"value": "Spread (pips)", "RunTimestamp": "Date & Time (UTC+7)", "variable": "Legend"}
+                        )
+                        fig1.update_layout(
+                            title=f"📈 Overlaid Spreads: {g_config['coin1']} vs {g_config['coin2']}",
+                            hovermode="x unified",
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                        )
+                        fig1.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
+                        st.plotly_chart(fig1, use_container_width=True)
+
+                        # --- GRAPH 2: Spread Difference ---
+                        fig2 = px.line(
+                            trend_data, 
+                            x='RunTimestamp', 
+                            y='Spread Difference',
+                            labels={"Spread Difference": "Difference (pips)", "RunTimestamp": "Date & Time (UTC+7)"}
+                        )
+                        fig2.update_layout(
+                            title="📉 Spread Difference (Pair 1 - Pair 2)",
+                            hovermode="x unified"
+                        )
+                        fig2.update_traces(line_color='#FF4B4B')
+                        fig2.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.5)
+                        st.plotly_chart(fig2, use_container_width=True)
+
+except Exception as e:
+    st.error(f"❌ An error occurred: {e}")       
 
 except Exception as e:
     st.error(f"❌ An error occurred: {e}")
