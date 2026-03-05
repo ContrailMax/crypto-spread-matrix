@@ -45,9 +45,8 @@ def color_spread(val):
     else: return 'background-color: #eeeeee; color: black;' 
 
 # ==========================================
-# 🟢 ฟังก์ชันสำหรับแต่ละหน้า (Pages)
+# 🟢 PAGE 1: SPREAD MATRIX
 # ==========================================
-
 def page_matrix():
     st.title("📊 Spread Matrix")
     df_all = st.session_state.df_all
@@ -95,6 +94,9 @@ def page_matrix():
     with sub_tab3: st.dataframe(build_matrix(exchanges, pivot_df, 'ASK', 'ASK').style.map(color_spread).format("{:.2f}", na_rep=""), use_container_width=True)
     with sub_tab4: st.dataframe(build_matrix(exchanges, pivot_df, 'BID', 'BID').style.map(color_spread).format("{:.2f}", na_rep=""), use_container_width=True)
 
+# ==========================================
+# 🟢 PAGE 2: HISTORICAL TREND
+# ==========================================
 def page_trend():
     st.title("📈 Historical Trend")
     df_all = st.session_state.df_all
@@ -149,41 +151,141 @@ def page_trend():
         else:
             st.warning("No data.")
 
+# ==========================================
+# 🟢 PAGE 3: 4-LEG ARBITRAGE
+# ==========================================
 def page_arb4():
     st.title("🔀 4-Leg Arbitrage")
     st.info("Cross-Exchange Spread Difference (Leg 1 vs Leg 2)")
-    # (โค้ดสำหรับ 4-Leg เดิมของคุณสามารถใส่ตรงนี้ได้ ผมย่อไว้เพื่อโฟกัส 3-Leg แต่ลอจิกเดิมใช้ได้ปกติครับ)
-    st.write("*(4-Leg Feature Structure retained here)*")
+    df_all = st.session_state.df_all
+    
+    if 'arb4_configs' not in st.session_state:
+        st.session_state.arb4_configs = []
 
+    ex_list = sorted(df_all['Exchange'].unique())
+    coin_list = sorted(df_all['Coin'].unique())
+    
+    with st.expander("➕ Create New 4-Leg Graph", expanded=True):
+        c1, c2, c3, c4 = st.columns(4)
+        exA = c1.selectbox("Exchange A", ex_list, key="arb_exA")
+        exB = c2.selectbox("Exchange B", ex_list, index=(1 if len(ex_list) > 1 else 0), key="arb_exB")
+        coin1 = c3.selectbox("Pair 1 (Coin)", coin_list, key="arb_coin1")
+        coin2 = c4.selectbox("Pair 2 (Coin)", coin_list, index=(1 if len(coin_list) > 1 else 0), key="arb_coin2")
+        
+        c5, c6, c7 = st.columns([2, 2, 1])
+        dir_options = ["Ask -> Bid", "Bid -> Ask", "Ask -> Ask", "Bid -> Bid"]
+        dir1 = c5.selectbox("Side 1 (For Pair 1)", dir_options, key="arb_dir1")
+        dir2 = c6.selectbox("Side 2 (For Pair 2)", dir_options, key="arb_dir2")
+        
+        c7.write(""); c7.write("")
+        if c7.button("📊 Add Graph", type="primary", key="add_arb4"):
+            st.session_state.arb4_configs.append({
+                'exA': exA, 'exB': exB, 'coin1': coin1, 'coin2': coin2, 
+                'dir1': dir1, 'dir2': dir2
+            })
+            st.rerun()
+
+    for i, g in enumerate(st.session_state.arb4_configs):
+        st.markdown("---")
+        h_col1, h_col2 = st.columns([9, 1])
+        h_col1.markdown(f"#### 🔀 {g['exA']} ➡️ {g['exB']} | Coins: {g['coin1']} & {g['coin2']}")
+        if h_col2.button("❌ Remove", key=f"del_arb_{i}"):
+            st.session_state.arb4_configs.pop(i); st.rerun()
+
+        f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+        start_date = f_col1.date_input("Start Date", df_all['Date'].min(), key=f"asd_{i}")
+        start_time = f_col2.time_input("Start Time", pd.to_datetime("00:00").time(), key=f"ast_{i}")
+        end_date = f_col3.date_input("End Date", df_all['Date'].max(), key=f"aed_{i}")
+        end_time = f_col4.time_input("End Time", pd.to_datetime("23:59:59").time(), key=f"aet_{i}")
+
+        start_dt, end_dt = pd.to_datetime(f"{start_date} {start_time}"), pd.to_datetime(f"{end_date} {end_time}")
+
+        df_g = df_all[
+            (df_all['Coin'].isin([g['coin1'], g['coin2']])) &
+            (df_all['Exchange'].isin([g['exA'], g['exB']])) &
+            (df_all['RunTimestamp'] >= start_dt) &
+            (df_all['RunTimestamp'] <= end_dt)
+        ]
+
+        if not df_g.empty:
+            pivot_chart = df_g.pivot_table(index='RunTimestamp', columns=['Coin', 'Exchange', 'Side'], values='price_usd')
+            trend_data = pd.DataFrame(index=pivot_chart.index)
+            
+            def get_spread_series(coin, dir_str):
+                sideA, sideB = dir_str.split(" -> ")[0].upper(), dir_str.split(" -> ")[1].upper()
+                if (coin, g['exA'], sideA) in pivot_chart.columns and (coin, g['exB'], sideB) in pivot_chart.columns:
+                    s1, s2 = pivot_chart[(coin, g['exA'], sideA)], pivot_chart[(coin, g['exB'], sideB)]
+                    return ((s1 - s2) / np.maximum(s1, s2)) * 10000
+                return pd.Series(dtype=float)
+
+            col_spread1, col_spread2 = f"{g['coin1']} Spread", f"{g['coin2']} Spread"
+            trend_data[col_spread1] = get_spread_series(g['coin1'], g['dir1'])
+            trend_data[col_spread2] = get_spread_series(g['coin2'], g['dir2'])
+
+            if not (trend_data[col_spread1].dropna().empty and trend_data[col_spread2].dropna().empty):
+                trend_data['Spread Difference'] = trend_data[col_spread1] - trend_data[col_spread2]
+                trend_data = trend_data.reset_index()
+
+                fig1 = px.line(trend_data, x='RunTimestamp', y=[col_spread1, col_spread2], title=f"📈 Overlaid Spreads: {g['coin1']} vs {g['coin2']}")
+                fig1.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                fig1.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
+                st.plotly_chart(fig1, use_container_width=True)
+
+                fig2 = px.line(trend_data, x='RunTimestamp', y='Spread Difference', title="📉 Spread Difference (Pair 1 - Pair 2)")
+                fig2.update_layout(hovermode="x unified")
+                fig2.update_traces(line_color='#FF4B4B')
+                fig2.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.5)
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.warning("⚠️ Missing data for BOTH pairs in the selected time range.")
+        else:
+            st.warning("⚠️ No data available.")
+
+# ==========================================
+# 🟢 PAGE 4: 3-LEG ARBITRAGE (INVENTORY REBALANCE)
+# ==========================================
 def page_arb3():
-    st.title("🔺 3-Leg Arbitrage (Cross-Exchange Triangular)")
+    st.title("🔺 3-Leg Arbitrage (Inventory Rebalance)")
     st.markdown("""
     **Logic:**
-    * **Forward (Buy ExA ➡️ Rebalance ExB ➡️ Rebuy Fiat):** `THB -> Buy Coin (ExA)` ➡️ `Sell Coin for USDT (ExB)` ➡️ `Sell USDT for THB (ExA)`
-    * **Reverse (Buy USDT ExA ➡️ Rebalance ExB ➡️ Sell Fiat):** `THB -> Buy USDT (ExA)` ➡️ `Buy Coin with USDT (ExB)` ➡️ `Sell Coin for THB (ExA)`
+    * **Direction 1 (Sell A ➡️ Buy B):** `Spend Fiat (A)` ➡️ `Get USDT (B)` ➡️ `Auto Leg 3: Sell USDT (A) to get Fiat`
+    * **Direction 2 (Buy A ➡️ Sell B):** `Get Fiat (A)` ➡️ `Spend USDT (B)` ➡️ `Auto Leg 3: Buy USDT (A) to restore USDT`
     """)
     
     df_all = st.session_state.df_all
     ex_list = sorted(df_all['Exchange'].unique())
     coin_list = sorted([c for c in df_all['Coin'].unique() if c != 'USDT'])
     
-    with st.expander("➕ Configure 3-Leg Arbitrage", expanded=True):
-        c1, c2, c3, c4 = st.columns(4)
-        exA = c1.selectbox("Ex A (Fiat/Home)", ex_list, index=ex_list.index("BITKUB") if "BITKUB" in ex_list else 0)
-        exB = c2.selectbox("Ex B (Crypto/USDT)", ex_list, index=ex_list.index("BINANCE") if "BINANCE" in ex_list else 0)
-        target_coin = c3.selectbox("Target Coin", coin_list)
+    with st.expander("➕ Configure 3-Leg Arbitrage Settings", expanded=True):
+        col1, col2, col3, col4 = st.columns(4)
+        exA = col1.selectbox("Ex A (Fiat/Home)", ex_list, index=ex_list.index("BITKUB") if "BITKUB" in ex_list else 0)
+        exB = col2.selectbox("Ex B (Crypto/USDT)", ex_list, index=ex_list.index("KUCOIN") if "KUCOIN" in ex_list else 0)
+        target_coin = col3.selectbox("Target Coin", coin_list)
+        direction = col4.selectbox("Trade Direction", ["Sell A ➡️ Buy B", "Buy A ➡️ Sell B"])
+
+        st.markdown("##### ⚙️ Execution Sides (Maker/Taker Config)")
+        s_col1, s_col2, s_col3 = st.columns(3)
         
-        c4.write(""); c4.write("")
-        if c4.button("📊 Plot 3-Leg Profit", type="primary"):
-            st.session_state.arb3_config = {'exA': exA, 'exB': exB, 'coin': target_coin}
+        # User เลือก Leg 1 และ Leg 2 ได้เอง (Default BID - ASK)
+        side1 = s_col1.selectbox(f"Leg 1 Side ({exA})", ["BID", "ASK"], index=0) # Default BID
+        side2 = s_col2.selectbox(f"Leg 2 Side ({exB})", ["BID", "ASK"], index=1) # Default ASK
+        
+        # Auto Leg 3 จะเปลี่ยนไปตาม Direction
+        auto_side3 = "ASK" if direction == "Sell A ➡️ Buy B" else "BID"
+        s_col3.info(f"**Leg 3 Side (USDT {exA}):** `{auto_side3}` (Auto-calculated)")
+        
+        if st.button("📊 Plot Profit Spread", type="primary"):
+            st.session_state.arb3_config = {
+                'exA': exA, 'exB': exB, 'coin': target_coin,
+                'dir': direction, 's1': side1, 's2': side2, 's3': auto_side3
+            }
             st.rerun()
 
     if 'arb3_config' in st.session_state:
         g = st.session_state.arb3_config
         st.markdown("---")
-        st.subheader(f"📈 Profit %: {g['exA']} 🔄 {g['exB']} ({g['coin']})")
+        st.subheader(f"📈 Net Profit %: {g['dir']} | {g['coin']}")
         
-        # คัดเฉพาะ ExA, ExB และ เหรียญเป้าหมาย + USDT
         df_g = df_all[
             (df_all['Exchange'].isin([g['exA'], g['exB']])) & 
             (df_all['Coin'].isin([g['coin'], 'USDT']))
@@ -193,55 +295,47 @@ def page_arb3():
             st.warning("⚠️ No data available for this configuration.")
             return
 
-        # ใช้ Raw Price (ราคาหน้ากระดาน) ในการคำนวณ ไม่ใช่ price_usd
+        # ใช้ราคา Raw สำหรับ 3-Leg
         pivot = df_g.pivot_table(index='RunTimestamp', columns=['Coin', 'Exchange', 'Side'], values='Price')
-        
-        # Resample เป็นระดับนาที และ Forward Fill เพื่อให้ Timestamp ทุกเส้นเชื่อมกันสนิท
         pivot = pivot.resample('1T').last().ffill().dropna(how='all')
 
         def safe_get(c, e, s):
             return pivot[(c, e, s)] if (c, e, s) in pivot.columns else pd.Series(np.nan, index=pivot.index)
 
-        # ข้อมูลสำหรับ Forward
-        ask_coin_A = safe_get(g['coin'], g['exA'], 'ASK')
-        bid_coin_B = safe_get(g['coin'], g['exB'], 'BID')
-        bid_usdt_A = safe_get('USDT', g['exA'], 'BID')
-        
-        # ข้อมูลสำหรับ Reverse
-        ask_usdt_A = safe_get('USDT', g['exA'], 'ASK')
-        ask_coin_B = safe_get(g['coin'], g['exB'], 'ASK')
-        bid_coin_A = safe_get(g['coin'], g['exA'], 'BID')
+        P1 = safe_get(g['coin'], g['exA'], g['s1'])
+        P2 = safe_get(g['coin'], g['exB'], g['s2'])
+        P3 = safe_get('USDT', g['exA'], g['s3'])
 
         trend = pd.DataFrame(index=pivot.index)
         
-        # คำนวณ % Profit
-        # Forward: กำไร = (ขาย Coin ได้ USDT บน B * ขาย USDT ได้ Fiat บน A) / (ต้นทุน Fiat ซื้อ Coin บน A) - 1
-        trend['Forward Profit %'] = ((bid_coin_B * bid_usdt_A) / ask_coin_A - 1) * 100
-        
-        # Reverse: กำไร = (ขาย Coin ได้ Fiat บน A) / (ต้นทุน Fiat ซื้อ USDT บน A * เอา USDT ซื้อ Coin บน B) - 1
-        trend['Reverse Profit %'] = (bid_coin_A / (ask_usdt_A * ask_coin_B) - 1) * 100
+        if g['dir'] == "Sell A ➡️ Buy B":
+            trend['Profit %'] = ((P1 / (P2 * P3)) - 1) * 100
+        else:
+            trend['Profit %'] = (((P2 * P3) / P1) - 1) * 100
 
-        fig = px.line(
-            trend.reset_index(), 
-            x='RunTimestamp', 
-            y=['Forward Profit %', 'Reverse Profit %'],
-            labels={"value": "Net Profit (%)", "RunTimestamp": "Time", "variable": "Direction"}
-        )
-        fig.update_layout(hovermode="x unified")
-        fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.8)
-        fig.add_hline(y=0.2, line_dash="dot", line_color="green", opacity=0.5, annotation_text="0.2% Fee Line")
-        st.plotly_chart(fig, use_container_width=True)
-
+        if trend['Profit %'].isna().all():
+            st.warning("⚠️ Missing data for the selected sides (BID/ASK).")
+        else:
+            fig = px.line(
+                trend.reset_index(), 
+                x='RunTimestamp', 
+                y='Profit %',
+                labels={"Profit %": "Net Profit (%)", "RunTimestamp": "Time"}
+            )
+            fig.update_layout(hovermode="x unified")
+            fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.8, annotation_text="0% (Break Even)")
+            fig.add_hline(y=0.25, line_dash="dot", line_color="green", opacity=0.5, annotation_text="0.25% Fee Line")
+            st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# 🚀 จุดเริ่มต้นแอปพลิเคชัน (Main)
+# 🚀 MAIN APPLICATION
 # ==========================================
 try:
     # --- เมนูด้านข้าง (Sidebar) ---
     st.sidebar.title("⚙️ Dashboard Config")
     st.sidebar.markdown("---")
     
-    # 💡 จุดแก้ปัญหาโหลดนาน: ให้ User เลือกวันโหลดข้อมูลได้ (Default 1 วัน)
+    # 💡 จุดแก้ปัญหาโหลดนาน: ให้ User เลือกวันโหลดข้อมูลได้
     days_to_load = st.sidebar.slider("📅 Days of data to load", min_value=1, max_value=7, value=1, help="Select 1 day for faster loading time.")
     
     with st.spinner(f'Fetching latest {days_to_load} days from BigQuery...'):
@@ -253,7 +347,7 @@ try:
     if df_all.empty:
         st.warning("⚠️ No data found in BigQuery for the selected timeframe.")
     else:
-        # 💡 จุดแก้ปัญหา Open in New Tab: ใช้ st.navigation (ต้องใช้ Streamlit เวอร์ชั่น >= 1.36.0)
+        # 💡 จุดแก้ปัญหา Open in New Tab: ใช้ st.navigation
         pages = [
             st.Page(page_matrix, title="Spread Matrix", icon="📊"),
             st.Page(page_trend, title="Historical Trend", icon="📈"),
