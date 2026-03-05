@@ -245,11 +245,12 @@ def page_arb4():
 # 🟢 PAGE 4: 3-LEG ARBITRAGE (INVENTORY REBALANCE)
 # ==========================================
 def page_arb3():
-    st.title("🔺 3-Leg Arbitrage (Inventory Rebalance)")
+    st.title("🔺 3-Leg Arbitrage (Spread in Pips)")
     st.markdown("""
-    **Logic:**
-    * **Direction 1 (Sell A ➡️ Buy B):** `Spend Fiat (A)` ➡️ `Get USDT (B)` ➡️ `Auto Leg 3: Sell USDT (A) to get Fiat`
-    * **Direction 2 (Buy A ➡️ Sell B):** `Get Fiat (A)` ➡️ `Spend USDT (B)` ➡️ `Auto Leg 3: Buy USDT (A) to restore USDT`
+    **Logic (Spread Calculation):**
+    * Convert Fiat price at **Ex A** to USDT equivalent using the USDT/Fiat pair at **Ex A**.
+    * Compare the converted price with the crypto price at **Ex B**.
+    * Calculate the spread in **Pips** (1 pip = 0.01%).
     """)
     
     df_all = st.session_state.df_all
@@ -267,14 +268,14 @@ def page_arb3():
         s_col1, s_col2, s_col3 = st.columns(3)
         
         # User เลือก Leg 1 และ Leg 2 ได้เอง (Default BID - ASK)
-        side1 = s_col1.selectbox(f"Leg 1 Side ({exA})", ["BID", "ASK"], index=0) # Default BID
-        side2 = s_col2.selectbox(f"Leg 2 Side ({exB})", ["BID", "ASK"], index=1) # Default ASK
+        side1 = s_col1.selectbox(f"Leg 1 Side ({exA})", ["BID", "ASK"], index=0) 
+        side2 = s_col2.selectbox(f"Leg 2 Side ({exB})", ["BID", "ASK"], index=1) 
         
         # Auto Leg 3 จะเปลี่ยนไปตาม Direction
         auto_side3 = "ASK" if direction == "Sell A ➡️ Buy B" else "BID"
         s_col3.info(f"**Leg 3 Side (USDT {exA}):** `{auto_side3}` (Auto-calculated)")
         
-        if st.button("📊 Plot Profit Spread", type="primary"):
+        if st.button("📊 Plot Spread (Pips)", type="primary"):
             st.session_state.arb3_config = {
                 'exA': exA, 'exB': exB, 'coin': target_coin,
                 'dir': direction, 's1': side1, 's2': side2, 's3': auto_side3
@@ -284,7 +285,7 @@ def page_arb3():
     if 'arb3_config' in st.session_state:
         g = st.session_state.arb3_config
         st.markdown("---")
-        st.subheader(f"📈 Net Profit %: {g['dir']} | {g['coin']}")
+        st.subheader(f"📈 Spread (Pips): {g['dir']} | {g['coin']}")
         
         df_g = df_all[
             (df_all['Exchange'].isin([g['exA'], g['exB']])) & 
@@ -295,7 +296,7 @@ def page_arb3():
             st.warning("⚠️ No data available for this configuration.")
             return
 
-        # ใช้ราคา Raw สำหรับ 3-Leg
+        # ใช้ราคา Raw
         pivot = df_g.pivot_table(index='RunTimestamp', columns=['Coin', 'Exchange', 'Side'], values='Price')
         pivot = pivot.resample('1T').last().ffill().dropna(how='all')
 
@@ -308,25 +309,29 @@ def page_arb3():
 
         trend = pd.DataFrame(index=pivot.index)
         
+        # แปลงราคา ExA ให้เป็น USDT ก่อน (Price A / USDT Price)
+        converted_P1 = P1 / P3
+        
         if g['dir'] == "Sell A ➡️ Buy B":
-            trend['Profit %'] = ((P1 / (P2 * P3)) - 1) * 100
+            # Spread = (Converted A - B) / max * 10000
+            trend['Spread (Pips)'] = ((converted_P1 - P2) / np.maximum(converted_P1, P2)) * 10000
         else:
-            trend['Profit %'] = (((P2 * P3) / P1) - 1) * 100
+            # Buy A, Sell B => Spread = (B - Converted A) / max * 10000
+            trend['Spread (Pips)'] = ((P2 - converted_P1) / np.maximum(converted_P1, P2)) * 10000
 
-        if trend['Profit %'].isna().all():
+        if trend['Spread (Pips)'].isna().all():
             st.warning("⚠️ Missing data for the selected sides (BID/ASK).")
         else:
             fig = px.line(
                 trend.reset_index(), 
                 x='RunTimestamp', 
-                y='Profit %',
-                labels={"Profit %": "Net Profit (%)", "RunTimestamp": "Time"}
+                y='Spread (Pips)',
+                labels={"Spread (Pips)": "Spread (Pips)", "RunTimestamp": "Time"}
             )
             fig.update_layout(hovermode="x unified")
-            fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.8, annotation_text="0% (Break Even)")
-            fig.add_hline(y=0.25, line_dash="dot", line_color="green", opacity=0.5, annotation_text="0.25% Fee Line")
+            fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.8, annotation_text="0 Pips (Break Even)")
             st.plotly_chart(fig, use_container_width=True)
-
+            
 # ==========================================
 # 🚀 MAIN APPLICATION
 # ==========================================
